@@ -29,11 +29,11 @@ touch_sensor = TouchSensor(Port.S1)
 
 robot = DriveBase(left_motor, right_motor, wheel_diameter=55.5, axle_track=104)
 
-DRIVE_SPEED = 100
+DRIVE_SPEED = 150
 
 # Parâmetros PID para o seguidor de linha
 pid_params = PID_parameters(
-    proportional_gain=1.0,
+    proportional_gain=5.0,
     integrative_gain=0.001,
     derivative_gain=1,
     reference=50

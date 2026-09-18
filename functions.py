@@ -9,7 +9,7 @@ def line_following_pid(robot, line_sensor, drive_speed, pid_params):
     
     # Define o limite de erro para o seguidor de linha
     error = line_sensor.reflection() - pid_params.reference
-    de_dt = pid_params.last_error - error
+    de_dt = error - pid_params.last_error
     ie_dt_temp = pid_params.ie_dt + error
 
     proportional_term = pid_params.proportional_gain * error
@@ -26,7 +26,8 @@ def line_following_pid(robot, line_sensor, drive_speed, pid_params):
         control_action = control_action_raw
         pid_params.ie_dt = ie_dt_temp
 
-    robot.drive(drive_speed, control_action)
+    # The robot's positive turn direction is opposite to the correction needed here.
+    robot.drive(drive_speed, -control_action)
 
     pid_params.last_error = error
     return pid_params.last_error
