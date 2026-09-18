@@ -11,57 +11,50 @@ Building instructions can be found at:
 https://education.lego.com/en-us/support/mindstorms-ev3/building-instructions#robot
 """
 
-from pybricks.ev3devices import Motor, ColorSensor, UltrasonicSensor, TouchSensor, GyroSensor
+from pybricks.ev3devices import Motor, ColorSensor, TouchSensor
 from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
 
 from functions import *
-
+from models import PID_parameters
 
 
 left_motor = Motor(Port.A)
 right_motor = Motor(Port.D)
 
 line_sensor = ColorSensor(Port.S2)
-ultrasonic_sensor = UltrasonicSensor(Port.S3)
 touch_sensor = TouchSensor(Port.S1)
-gyro_sensor = GyroSensor(Port.S4)
+
 
 robot = DriveBase(left_motor, right_motor, wheel_diameter=55.5, axle_track=104)
 
-
-BLACK = 50
-WHITE = 50
-threshold = (BLACK + WHITE) / 2
-
-# Threshold da distância para o sensor ultrassônico.
-DISTANCE_THRESHOLD = 200  # Distância em milímetros
-
-# Definição da velocidade em milimetros por segundo
 DRIVE_SPEED = 100
 
-# Taxa de giro fixa para o seguidor de linha.
-TURN_RATE = 30
+# Parâmetros PID para o seguidor de linha
+pid_params = PID_parameters(
+    proportional_gain=1.0,
+    integrative_gain=0.001,
+    derivative_gain=1,
+    reference=50
+)
 
+# Start and stop line following with each button press.
+running = False
+button_was_pressed = False
 
-# Start following the line endlessly.
 while True:
-    if touch_sensor.pressed():
+    button_is_pressed = touch_sensor.pressed()
 
-        while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
-            line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED)
+    if button_is_pressed and not button_was_pressed:
+        running = not running
+        if not running:
+            robot.stop()
 
-        gyro_turn(robot, 180)
-
-        while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
-            line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED)
-
-        gyro_turn(robot, 90)
-
-        wait(3000)
-        robot.stop()
-
-
+    if running:
+        pid_params.last_error = line_following_pid(robot, line_sensor, DRIVE_SPEED, pid_params)
+    button_was_pressed = button_is_pressed
+    wait(10)
     
-    
+
+

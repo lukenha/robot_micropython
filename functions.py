@@ -3,17 +3,34 @@ from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
 
+from models import PID_parameters
 
-def line_following_proportional(robot, line_sensor, threshold, PROPORTIONAL_GAIN, DRIVE_SPEED):
+def line_following_pid(robot, line_sensor, drive_speed, pid_params):
     
     # Define o limite de erro para o seguidor de linha
-    error = line_sensor.reflection() - threshold
+    error = line_sensor.reflection() - pid_params.reference
+    de_dt = pid_params.last_error - error
+    ie_dt_temp = pid_params.ie_dt + error
 
-    # Calcula a taxa de giro
-    turn_rate = PROPORTIONAL_GAIN * error
+    proportional_term = pid_params.proportional_gain * error
+    integrative_term = pid_params.integrative_gain * ie_dt_temp
+    derivative_term = pid_params.derivative_gain * de_dt
 
-    # Define a velocidade do robô e a taxa de giro
-    robot.drive(DRIVE_SPEED, turn_rate)
+    control_action_raw = proportional_term + integrative_term + derivative_term
+
+    if control_action_raw > 100:
+        control_action = 100 
+    elif control_action_raw < -100:
+        control_action = -100
+    else:
+        control_action = control_action_raw
+        pid_params.ie_dt = ie_dt_temp
+
+    robot.drive(drive_speed, control_action)
+
+    pid_params.last_error = error
+    return pid_params.last_error
+
 
 def line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED):
     # Seguimento de linha baseado em taxa de giro fixa
