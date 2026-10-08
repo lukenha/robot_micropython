@@ -5,6 +5,31 @@ from pybricks.robotics import DriveBase
 
 from models import PID_parameters
 
+def gyro_pid(robot, gyro_sensor, drive_speed, pid_params):
+    error = pid_params.reference - gyro_sensor.angle()
+    integral = pid_params.ie_dt + error * 0.01
+    if integral > 50:
+        integral = 50
+    elif integral < -50:
+        integral = -50
+
+    derivative = (error - pid_params.last_error) / 0.01
+    turn_rate = (pid_params.proportional_gain * error
+                 + pid_params.integrative_gain * integral
+                 + pid_params.derivative_gain * derivative)
+    if turn_rate > 100:
+        turn_rate = 100
+    elif turn_rate < -100:
+        turn_rate = -100
+    elif drive_speed == 0 and abs(error) > 1 and abs(turn_rate) < 15:
+        turn_rate = 15 if error > 0 else -15
+
+    robot.drive(drive_speed, turn_rate)
+    pid_params.last_error = error
+    pid_params.ie_dt = integral
+    return turn_rate
+
+
 def line_following_pid(robot, line_sensor, drive_speed, pid_params):
     
     # Define o limite de erro para o seguidor de linha
@@ -54,6 +79,7 @@ def ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
     else:
         return False
 
+
 def gyro_turn(robot, gyro_sensor, angle):
     # Gira o robo com base no gyro externo
     gyro_sensor.reset_angle(0)
@@ -66,5 +92,4 @@ def gyro_turn(robot, gyro_sensor, angle):
         while gyro_sensor.angle() > angle:
             robot.drive(0, -100)  # Gira para a esquerda
 
-            
-     
+
