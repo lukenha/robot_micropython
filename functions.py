@@ -1,95 +1,97 @@
-from pybricks.ev3devices import Motor, ColorSensor, UltrasonicSensor
-from pybricks.parameters import Port
 from pybricks.tools import wait
-from pybricks.robotics import DriveBase
 
-from models import PID_parameters
+# Intervalo de amostragem da malha de controle. Usado no wait() dos lacos de
+# movimento (ms) e nos termos integral e derivativo do PID (s).
+SAMPLE_TIME_MS = 10
+SAMPLE_TIME = SAMPLE_TIME_MS / 1000
+
+# Velocidade minima de aproximacao no fim de um trecho reto, em mm/s.
+MIN_APPROACH_SPEED = 60
+
 
 def gyro_pid(robot, gyro_sensor, drive_speed, pid_params):
+    """Calcula e aplica uma correcao de direcao para manter o heading medido
+    pelo giroscopio igual a referencia. Retorna a variavel manipulada
+    (taxa de giro, em graus/s)."""
     error = pid_params.reference - gyro_sensor.angle()
-    integral = pid_params.ie_dt + error * 0.01
+
+    integral = pid_params.ie_dt + error * SAMPLE_TIME
     if integral > 50:
         integral = 50
     elif integral < -50:
         integral = -50
 
-    derivative = (error - pid_params.last_error) / 0.01
+    derivative = (error - pid_params.last_error) / SAMPLE_TIME
+
     turn_rate = (pid_params.proportional_gain * error
                  + pid_params.integrative_gain * integral
                  + pid_params.derivative_gain * derivative)
+
     if turn_rate > 100:
         turn_rate = 100
     elif turn_rate < -100:
         turn_rate = -100
     elif drive_speed == 0 and abs(error) > 1 and abs(turn_rate) < 15:
+        # Girando no proprio eixo, um comando muito fraco nao vence o atrito e
+        # o robo trava antes de chegar ao alvo.
         turn_rate = 15 if error > 0 else -15
 
     robot.drive(drive_speed, turn_rate)
+
     pid_params.last_error = error
     pid_params.ie_dt = integral
     return turn_rate
 
 
-def line_following_pid(robot, line_sensor, drive_speed, pid_params):
-    
-    # Define o limite de erro para o seguidor de linha
-    error = line_sensor.reflection() - pid_params.reference
-    de_dt = error - pid_params.last_error
-    ie_dt_temp = pid_params.ie_dt + error
+def turn_in_place(robot, gyro_sensor, pid_params, odometry, angle):
+    """Gira o robo no proprio eixo ate o angulo do giroscopio variar 'angle'
+    graus. Angulo positivo gira no sentido horario, negativo no anti-horario."""
+    pid_params.reference = gyro_sensor.angle() + angle
+    pid_params.last_error = angle
+    pid_params.ie_dt = 0
 
-    proportional_term = pid_params.proportional_gain * error
-    integrative_term = pid_params.integrative_gain * ie_dt_temp
-    derivative_term = pid_params.derivative_gain * de_dt
+    while abs(pid_params.reference - gyro_sensor.angle()) > 1:
+        turn_rate = gyro_pid(robot, gyro_sensor, 0, pid_params)
+        odometry.record("turn", 0, pid_params.reference, 0, turn_rate)
+        wait(SAMPLE_TIME_MS)
 
-    control_action_raw = proportional_term + integrative_term + derivative_term
-
-    if control_action_raw > 100:
-        control_action = 100 
-    elif control_action_raw < -100:
-        control_action = -100
-    else:
-        control_action = control_action_raw
-        pid_params.ie_dt = ie_dt_temp
-
-    # The robot's positive turn direction is opposite to the correction needed here.
-    robot.drive(drive_speed, -control_action)
-
-    pid_params.last_error = error
-    return pid_params.last_error
+    robot.stop()
+    wait(100)
 
 
-def line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED):
-    # Seguimento de linha baseado em taxa de giro fixa
-    reflection = line_sensor.reflection()
+def drive_straight(robot, gyro_sensor, pid_params, odometry, distance,
+                   drive_speed):
+    """Anda 'distance' mm em linha reta, mantendo o heading atual com o PID do
+    giroscopio e desacelerando no fim do trecho para nao passar do alvo."""
+    pid_params.reference = gyro_sensor.angle()
+    pid_params.last_error = 0
+    pid_params.ie_dt = 0
+    robot.reset()
 
-    # Corrige para o lado oposto quando a leitura ultrapassa o threshold.
-    if reflection > threshold:
-        turn_rate = -TURN_RATE
-    else:
-        turn_rate = TURN_RATE
+    while robot.distance() < distance:
+        remaining = distance - robot.distance()
+        speed = min(drive_speed, max(MIN_APPROACH_SPEED, remaining * 2))
+        turn_rate = gyro_pid(robot, gyro_sensor, speed, pid_params)
+        odometry.record("straight", distance, pid_params.reference, speed,
+                        turn_rate)
+        wait(SAMPLE_TIME_MS)
 
-    robot.drive(DRIVE_SPEED, turn_rate)
-
-def ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
-    # Lê a distancia do sensor ultrasônico
-    distance = ultrasonic_sensor.distance()
-
-    if distance < DISTANCE_THRESHOLD:
-        return True 
-    else:
-        return False
+    robot.stop()
 
 
-def gyro_turn(robot, gyro_sensor, angle):
-    # Gira o robo com base no gyro externo
-    gyro_sensor.reset_angle(0)
+def run_square(robot, gyro_sensor, pid_params, odometry, segments, direction,
+               drive_speed):
+    """Percorre o quadrado descrito por 'segments', uma sequencia de
+    (angulo_de_giro, distancia_mm).
 
-    if angle > 0:
-        while gyro_sensor.angle() < angle:
-            robot.drive(0, 100)  # Gira para a direita
-
-    else:
-        while gyro_sensor.angle() > angle:
-            robot.drive(0, -100)  # Gira para a esquerda
-
-
+    'direction' inverte o sinal dos giros e com isso o sentido do percurso:
+    1 para o sentido horario e -1 para o anti-horario. Inverter o sinal e o
+    que realmente espelha o caminho - apenas dar meia volta antes de repetir a
+    mesma sequencia de giros manteria o percurso no sentido original."""
+    for turn_angle, distance in segments:
+        if turn_angle is not None:
+            turn_in_place(robot, gyro_sensor, pid_params, odometry,
+                          turn_angle * direction)
+        if distance > 0:
+            drive_straight(robot, gyro_sensor, pid_params, odometry, distance,
+                           drive_speed)
