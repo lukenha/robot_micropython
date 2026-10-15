@@ -60,7 +60,6 @@ class OdometryLogger:
 
             # Medidas diretas dos sensores.
             "gyro_angle_deg",
-            "gyro_rate_deg_s",
             "left_motor_angle_deg",
             "left_motor_speed_deg_s",
             "right_motor_angle_deg",
@@ -146,7 +145,6 @@ class OdometryLogger:
             turn_rate,
 
             gyro_angle,
-            self.gyro_sensor.speed(),
             left_angle,
             self.left_motor.speed(),
             right_angle,

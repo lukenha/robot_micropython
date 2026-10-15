@@ -38,9 +38,9 @@ AXLE_TRACK = 104
 DRIVE_SPEED = 200
 BLACK_REFLECTION_THRESHOLD = 15
 
-HEADING_KP = 2.0
-HEADING_KI = 0.01
-HEADING_KD = 7.5
+HEADING_KP = 1.5 #2.0
+HEADING_KI = 0.7 #0.01
+HEADING_KD = 0 #7.5
 
 CLOCKWISE = 1
 COUNTERCLOCKWISE = -1
@@ -105,8 +105,11 @@ run_square(robot, gyro_sensor, heading_pid, odometry, SQUARE_SEGMENTS,
 
 turn_in_place(robot, gyro_sensor, heading_pid, odometry, 180)
 
+# Depois da meia volta o sensor de cor fica do outro lado do eixo, entao a
+# segunda volta termina pela faixa preta e nao pela distancia.
 run_square(robot, gyro_sensor, heading_pid, odometry, SQUARE_SEGMENTS,
-           COUNTERCLOCKWISE, DRIVE_SPEED)
+           COUNTERCLOCKWISE, DRIVE_SPEED, line_sensor,
+           BLACK_REFLECTION_THRESHOLD)
 
 robot.stop()
 wait(200)  # deixa o robo parar de fato antes da ultima amostra.
