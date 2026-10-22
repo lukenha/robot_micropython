@@ -77,7 +77,7 @@ class OdometryLogger:
             "x_wheel_mm",
             "y_wheel_mm",
 
-            name="square_odometry",
+            name="maze_odometry",
             timestamp=True,
             extension="csv",
         )

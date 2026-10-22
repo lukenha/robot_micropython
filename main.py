@@ -1,32 +1,33 @@
 #!/usr/bin/env pybricks-micropython
 
 """
-Percurso em quadrado com odometria - LEGO EV3 / pybricks
---------------------------------------------------------
+Resolvedor de labirinto com odometria - LEGO EV3 / pybricks
+-----------------------------------------------------------
 
-O robo parte do meio do primeiro lado do quadrado, percorre o quadrado no
-sentido horario com giros de 90 graus e volta ao ponto de partida. Nesse ponto
-ele da meia volta (180 graus) e repete o mesmo quadrado no sentido
-anti-horario, parando novamente no ponto de partida. O botao e usado apenas
-para iniciar: as duas voltas acontecem em sequencia, sem nova intervencao.
+O robo anda em linha reta, guiado pelo PID do giroscopio, ate o ultrassom
+encontrar uma parede. Ali ele para, gira a torre do ultrassom para medir a
+distancia ate as paredes da esquerda e da direita e gira 90 graus para o lado
+mais livre. Se os dois lados estiverem fechados (beco sem saida), da meia volta
+(180 graus). O percurso termina quando o sensor de cor encontra a faixa preta
+de chegada. O botao e usado apenas para iniciar.
 
 Durante todo o percurso o OdometryLogger grava em CSV as medidas dos sensores,
 os setpoints de distancia e angulo, a variavel manipulada do PID e a pose
 estimada do robo.
 
 ATENCAO - sentido de giro: assume-se que o angulo do giroscopio cresce no
-sentido horario (convencao padrao do pybricks). Isso precisa ser confirmado no
-teste com o robo: se o giroscopio estiver montado ao contrario, a primeira
-volta sai no anti-horario e a segunda no horario, e basta inverter os valores
-de 'direction' nas chamadas de run_square().
+sentido horario (convencao padrao do pybricks), entao +90 vira para a direita e
+-90 para a esquerda. Isso precisa ser confirmado no teste com o robo, assim
+como o sentido da torre (TURRET_LEFT / TURRET_RIGHT em functions.py).
 """
 
-from pybricks.ev3devices import Motor, ColorSensor, TouchSensor, GyroSensor
+from pybricks.ev3devices import (Motor, ColorSensor, TouchSensor, GyroSensor,
+                                 UltrasonicSensor)
 from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
 
-from functions import run_square, turn_in_place
+from functions import drive_until_wall, scan_sides, turn_in_place
 from models import PID_parameters
 from odometry import OdometryLogger
 
@@ -42,27 +43,21 @@ HEADING_KP = 1.5 #2.0
 HEADING_KI = 0.7 #0.01
 HEADING_KD = 0 #7.5
 
-CLOCKWISE = 1
-COUNTERCLOCKWISE = -1
+# Distancia da parede da frente em que o robo para e decide o giro, em mm.
+STOP_DISTANCE = 60
 
-# Cada trecho do percurso e um par (angulo_de_giro, distancia_mm). O primeiro e
-# o ultimo trecho tem meio lado porque o robo parte e termina no meio do
-# primeiro lado do quadrado.
-SQUARE_SEGMENTS = (
-    (None, 500),
-    (90, 1000),
-    (90, 1000),
-    (90, 1000),
-    (90, 500),
-)
+# Distancia lateral ate a qual o lado e considerado fechado por parede, em mm.
+SIDE_OPEN_DISTANCE = 200
 
 
 left_motor = Motor(Port.A)
 right_motor = Motor(Port.D)
+turret_motor = Motor(Port.C)
 
 line_sensor = ColorSensor(Port.S2)
 touch_sensor = TouchSensor(Port.S1)
 gyro_sensor = GyroSensor(Port.S3)
+ultrasonic_sensor = UltrasonicSensor(Port.S4)
 
 robot = DriveBase(left_motor, right_motor, wheel_diameter=WHEEL_DIAMETER,
                   axle_track=AXLE_TRACK)
@@ -86,10 +81,12 @@ heading_pid = PID_parameters(
     reference=0,
 )
 
-# Zera as medidas com o robo parado, para que a odometria comece na origem.
+# Zera as medidas com o robo parado, para que a odometria comece na origem. A
+# torre do ultrassom precisa estar apontada para a frente nesse momento.
 gyro_sensor.reset_angle(0)
 left_motor.reset_angle(0)
 right_motor.reset_angle(0)
+turret_motor.reset_angle(0)
 robot.reset()
 
 # Unico acionamento manual do programa: robo posicionado sobre a linha preta e
@@ -100,16 +97,21 @@ while not (touch_sensor.pressed()
 
 odometry.record("start", 0, gyro_sensor.angle(), 0, 0)
 
-run_square(robot, gyro_sensor, heading_pid, odometry, SQUARE_SEGMENTS,
-           CLOCKWISE, DRIVE_SPEED)
-
-turn_in_place(robot, gyro_sensor, heading_pid, odometry, 180)
-
-# Depois da meia volta o sensor de cor fica do outro lado do eixo, entao a
-# segunda volta termina pela faixa preta e nao pela distancia.
-run_square(robot, gyro_sensor, heading_pid, odometry, SQUARE_SEGMENTS,
-           COUNTERCLOCKWISE, DRIVE_SPEED, line_sensor,
-           BLACK_REFLECTION_THRESHOLD)
+# drive_until_wall retorna True quando encontra a faixa preta de chegada.
+while not drive_until_wall(robot, gyro_sensor, heading_pid, odometry,
+                           ultrasonic_sensor, line_sensor,
+                           BLACK_REFLECTION_THRESHOLD, STOP_DISTANCE,
+                           DRIVE_SPEED):
+    left_distance, right_distance = scan_sides(turret_motor,
+                                               ultrasonic_sensor)
+    if (left_distance <= SIDE_OPEN_DISTANCE
+            and right_distance <= SIDE_OPEN_DISTANCE):
+        turn_angle = 180  # beco sem saida
+    elif left_distance > right_distance:
+        turn_angle = -90
+    else:
+        turn_angle = 90
+    turn_in_place(robot, gyro_sensor, heading_pid, odometry, turn_angle)
 
 robot.stop()
 wait(200)  # deixa o robo parar de fato antes da ultima amostra.

@@ -8,14 +8,15 @@ SAMPLE_TIME = SAMPLE_TIME_MS / 1000
 # Velocidade minima de aproximacao no fim de um trecho reto, em mm/s.
 MIN_APPROACH_SPEED = 60
 
-# Velocidade usada enquanto o robo procura a faixa preta de chegada, em mm/s.
-# Mais baixa que a de cruzeiro para o robo parar logo depois de detectar a
-# faixa, em vez de passar por cima dela.
-LINE_SEARCH_SPEED = 100
+# Torre do ultrassom: velocidade (graus/s) e angulos absolutos do motor para
+# olhar para cada lado. O angulo 0 e o sensor apontado para a frente. O sinal
+# depende da montagem e precisa ser confirmado no robo.
+TURRET_SPEED = 500
+TURRET_LEFT = -90
+TURRET_RIGHT = 90
 
-# Fracao do ultimo trecho percorrida antes de comecar a procurar a faixa. Evita
-# parar em alguma marca escura no comeco do trecho.
-LINE_SEARCH_START = 0.5
+# Tempo para o ultrassom estabilizar depois que a torre para, em ms.
+TURRET_SETTLE_MS = 100
 
 
 def gyro_pid(robot, gyro_sensor, drive_speed, pid_params):
@@ -68,81 +69,57 @@ def turn_in_place(robot, gyro_sensor, pid_params, odometry, angle):
     wait(100)
 
 
-def drive_straight(robot, gyro_sensor, pid_params, odometry, distance,
-                   drive_speed):
-    """Anda 'distance' mm em linha reta, mantendo o heading atual com o PID do
-    giroscopio e desacelerando no fim do trecho para nao passar do alvo."""
-    pid_params.reference = gyro_sensor.angle()
-    pid_params.last_error = 0
-    pid_params.ie_dt = 0
-    robot.reset()
-
-    while robot.distance() < distance:
-        remaining = distance - robot.distance()
-        speed = min(drive_speed, max(MIN_APPROACH_SPEED, remaining * 2))
-        turn_rate = gyro_pid(robot, gyro_sensor, speed, pid_params)
-        odometry.record("straight", distance, pid_params.reference, speed,
-                        turn_rate)
-        wait(SAMPLE_TIME_MS)
-
-    robot.stop()
-
-
-def drive_to_line(robot, gyro_sensor, pid_params, odometry, line_sensor,
-                  black_threshold, distance, drive_speed):
+def drive_until_wall(robot, gyro_sensor, pid_params, odometry,
+                     ultrasonic_sensor, line_sensor, black_threshold,
+                     stop_distance, drive_speed):
     """Anda em linha reta, mantendo o heading atual com o PID do giroscopio,
-    ate o sensor de cor encontrar a faixa preta.
+    ate o ultrassom medir uma parede a 'stop_distance' mm ou o sensor de cor
+    encontrar a faixa preta de chegada. Desacelera ao se aproximar da parede.
 
-    O sensor fica a frente do eixo das rodas, entao depois da meia volta ele
-    chega na faixa antes do eixo voltar ao ponto de partida. Parar pela faixa
-    corrige esse deslocamento e tambem o erro acumulado da odometria.
+    Retorna True se parou na faixa preta e False se parou na parede.
 
-    A faixa so e procurada depois de LINE_SEARCH_START * 'distance' mm. Se ela
-    nao aparecer ate 'distance' mm, o robo para ali, como em drive_straight."""
+    O robo larga em cima da faixa preta, entao a faixa so passa a contar depois
+    que o sensor de cor ve o chao claro pela primeira vez no trecho."""
     pid_params.reference = gyro_sensor.angle()
     pid_params.last_error = 0
     pid_params.ie_dt = 0
     robot.reset()
 
-    search_start = distance * LINE_SEARCH_START
+    seen_floor = False
 
-    while robot.distance() < distance:
-        if robot.distance() < search_start:
-            speed = drive_speed
+    while True:
+        if line_sensor.reflection() <= black_threshold:
+            if seen_floor:
+                robot.stop()
+                return True
         else:
-            if line_sensor.reflection() <= black_threshold:
-                break
-            speed = LINE_SEARCH_SPEED
+            seen_floor = True
+
+        # Sem obstaculo o ultrassom mede 2550 mm, que conta como caminho livre.
+        front = ultrasonic_sensor.distance()
+        if front <= stop_distance:
+            robot.stop()
+            return False
+
+        speed = min(drive_speed,
+                    max(MIN_APPROACH_SPEED, (front - stop_distance) * 2))
         turn_rate = gyro_pid(robot, gyro_sensor, speed, pid_params)
-        odometry.record("to_line", distance, pid_params.reference, speed,
+        odometry.record("maze", stop_distance, pid_params.reference, speed,
                         turn_rate)
         wait(SAMPLE_TIME_MS)
 
-    robot.stop()
 
+def scan_sides(turret_motor, ultrasonic_sensor):
+    """Gira a torre do ultrassom para a esquerda e para a direita, mede a
+    distancia ate a parede em cada lado e volta a apontar para a frente.
+    Retorna (esquerda, direita) em mm."""
+    turret_motor.run_target(TURRET_SPEED, TURRET_LEFT)
+    wait(TURRET_SETTLE_MS)
+    left = ultrasonic_sensor.distance()
 
-def run_square(robot, gyro_sensor, pid_params, odometry, segments, direction,
-               drive_speed, line_sensor=None, black_threshold=None):
-    """Percorre o quadrado descrito por 'segments', uma sequencia de
-    (angulo_de_giro, distancia_mm).
+    turret_motor.run_target(TURRET_SPEED, TURRET_RIGHT)
+    wait(TURRET_SETTLE_MS)
+    right = ultrasonic_sensor.distance()
 
-    'direction' inverte o sinal dos giros e com isso o sentido do percurso:
-    1 para o sentido horario e -1 para o anti-horario. Inverter o sinal e o
-    que realmente espelha o caminho - apenas dar meia volta antes de repetir a
-    mesma sequencia de giros manteria o percurso no sentido original.
-
-    Se 'line_sensor' for informado, o ultimo trecho termina na faixa preta
-    (drive_to_line) em vez de pela distancia."""
-    last_index = len(segments) - 1
-    for index, (turn_angle, distance) in enumerate(segments):
-        if turn_angle is not None:
-            turn_in_place(robot, gyro_sensor, pid_params, odometry,
-                          turn_angle * direction)
-        if distance > 0:
-            if line_sensor is not None and index == last_index:
-                drive_to_line(robot, gyro_sensor, pid_params, odometry,
-                              line_sensor, black_threshold, distance,
-                              drive_speed)
-            else:
-                drive_straight(robot, gyro_sensor, pid_params, odometry,
-                               distance, drive_speed)
+    turret_motor.run_target(TURRET_SPEED, 0)
+    return left, right
