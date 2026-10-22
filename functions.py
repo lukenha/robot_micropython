@@ -53,11 +53,14 @@ def gyro_pid(robot, gyro_sensor, drive_speed, pid_params):
     return turn_rate
 
 
-def turn_in_place(robot, gyro_sensor, pid_params, odometry, angle):
-    """Gira o robo no proprio eixo ate o angulo do giroscopio variar 'angle'
-    graus. Angulo positivo gira no sentido horario, negativo no anti-horario."""
-    pid_params.reference = gyro_sensor.angle() + angle
-    pid_params.last_error = angle
+def turn_in_place(robot, gyro_sensor, pid_params, odometry, heading):
+    """Gira o robo no proprio eixo ate o giroscopio marcar o heading absoluto
+    'heading' (graus, multiplo de 90 contado desde a largada). Usar o heading
+    absoluto, e nao o angulo atual + giro, evita que o erro de cada curva se
+    acumule nas seguintes. Heading maior que o atual gira no sentido horario,
+    menor gira no anti-horario."""
+    pid_params.reference = heading
+    pid_params.last_error = heading - gyro_sensor.angle()
     pid_params.ie_dt = 0
 
     while abs(pid_params.reference - gyro_sensor.angle()) > 1:
@@ -69,19 +72,21 @@ def turn_in_place(robot, gyro_sensor, pid_params, odometry, angle):
     wait(100)
 
 
-def drive_until_wall(robot, gyro_sensor, pid_params, odometry,
+def drive_until_wall(robot, gyro_sensor, pid_params, odometry, heading,
                      ultrasonic_sensor, line_sensor, black_threshold,
                      stop_distance, drive_speed):
-    """Anda em linha reta, mantendo o heading atual com o PID do giroscopio,
-    ate o ultrassom medir uma parede a 'stop_distance' mm ou o sensor de cor
-    encontrar a faixa preta de chegada. Desacelera ao se aproximar da parede.
+    """Anda em linha reta, mantendo o heading absoluto 'heading' com o PID do
+    giroscopio, ate o ultrassom medir uma parede a 'stop_distance' mm ou o
+    sensor de cor encontrar a faixa preta de chegada. Desacelera ao se
+    aproximar da parede. Se a curva anterior parou um pouco antes ou depois do
+    alvo, o PID corrige essa diferenca durante a reta.
 
     Retorna True se parou na faixa preta e False se parou na parede.
 
     O robo larga em cima da faixa preta, entao a faixa so passa a contar depois
     que o sensor de cor ve o chao claro pela primeira vez no trecho."""
-    pid_params.reference = gyro_sensor.angle()
-    pid_params.last_error = 0
+    pid_params.reference = heading
+    pid_params.last_error = heading - gyro_sensor.angle()
     pid_params.ie_dt = 0
     robot.reset()
 

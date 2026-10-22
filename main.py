@@ -97,9 +97,14 @@ while not (touch_sensor.pressed()
 
 odometry.record("start", 0, gyro_sensor.angle(), 0, 0)
 
+# Percurso no labirinto. O heading alvo e absoluto, contado desde a largada, e
+# sempre multiplo de 90 graus: cada decisao soma o giro escolhido ao alvo, e
+# tanto a curva quanto a reta seguinte usam esse alvo como referencia do PID.
 # drive_until_wall retorna True quando encontra a faixa preta de chegada.
+target_heading = 0
+
 while not drive_until_wall(robot, gyro_sensor, heading_pid, odometry,
-                           ultrasonic_sensor, line_sensor,
+                           target_heading, ultrasonic_sensor, line_sensor,
                            BLACK_REFLECTION_THRESHOLD, STOP_DISTANCE,
                            DRIVE_SPEED):
     left_distance, right_distance = scan_sides(turret_motor,
@@ -111,7 +116,9 @@ while not drive_until_wall(robot, gyro_sensor, heading_pid, odometry,
         turn_angle = -90
     else:
         turn_angle = 90
-    turn_in_place(robot, gyro_sensor, heading_pid, odometry, turn_angle)
+
+    target_heading = target_heading + turn_angle
+    turn_in_place(robot, gyro_sensor, heading_pid, odometry, target_heading)
 
 robot.stop()
 wait(200)  # deixa o robo parar de fato antes da ultima amostra.
