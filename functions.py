@@ -1,4 +1,4 @@
-from pybricks.tools import wait
+from pybricks.tools import StopWatch, wait
 
 # Intervalo de amostragem da malha de controle. Usado no wait() dos lacos de
 # movimento (ms) e nos termos integral e derivativo do PID (s).
@@ -7,6 +7,14 @@ SAMPLE_TIME = SAMPLE_TIME_MS / 1000
 
 # Velocidade minima de aproximacao no fim de um trecho reto, em mm/s.
 MIN_APPROACH_SPEED = 60
+
+# Alinhamento pela parede da frente: tolerancia (mm), ganho (mm/s por mm de
+# erro), limites de velocidade (mm/s) e tempo maximo da manobra (ms).
+ALIGN_TOLERANCE = 5
+ALIGN_GAIN = 3
+ALIGN_MIN_SPEED = 25
+ALIGN_MAX_SPEED = 80
+ALIGN_TIMEOUT_MS = 2000
 
 # Torre do ultrassom: velocidade (graus/s) e angulos absolutos do motor para
 # olhar para cada lado. O angulo 0 e o sensor apontado para a frente. O sinal
@@ -73,24 +81,25 @@ def turn_in_place(robot, gyro_sensor, pid_params, odometry, heading):
     wait(100)
 
 
-def drive_until_wall(robot, gyro_sensor, pid_params, odometry, heading,
-                     ultrasonic_sensor,
-                     # line_sensor, black_threshold,
-                     stop_distance, drive_speed):
-    """Anda em linha reta, mantendo o heading absoluto 'heading' com o PID do
-    giroscopio, ate o ultrassom medir uma parede a 'stop_distance' mm ou o
-    sensor de cor encontrar a faixa preta de chegada. Desacelera ao se
-    aproximar da parede. Se a curva anterior parou um pouco antes ou depois do
-    alvo, o PID corrige essa diferenca durante a reta.
+def drive_cell(robot, gyro_sensor, pid_params, odometry, heading, distance,
+               ultrasonic_sensor,
+               # line_sensor, black_threshold,
+               stop_distance, drive_speed):
+    """Avanca 'distance' mm em linha reta, medidos pelos encoders, mantendo o
+    heading absoluto 'heading' com o PID do giroscopio. Desacelera perto do
+    fim do trecho e, por seguranca, para antes se o ultrassom medir uma parede
+    a 'stop_distance' mm ou menos. Se a curva anterior parou um pouco antes ou
+    depois do alvo, o PID corrige essa diferenca durante o trecho.
 
-    Retorna True se parou na faixa preta e False se parou na parede.
+    Retorna True se parou na faixa preta de chegada e False se completou o
+    trecho (ou parou por seguranca).
 
     O robo larga em cima da faixa preta, entao a faixa so passa a contar depois
     que o sensor de cor ve o chao claro pela primeira vez no trecho.
 
     SENSOR DE LINHA DESATIVADO: a deteccao da faixa preta esta comentada
-    enquanto o sensor de cor nao esta montado, entao a funcao so para na
-    parede e sempre retorna False."""
+    enquanto o sensor de cor nao esta montado, entao a funcao sempre retorna
+    False."""
     pid_params.reference = heading
     pid_params.last_error = heading - gyro_sensor.angle()
     pid_params.ie_dt = 0
@@ -106,18 +115,75 @@ def drive_until_wall(robot, gyro_sensor, pid_params, odometry, heading,
         # else:
         #     seen_floor = True
 
+        remaining = distance - robot.distance()
+        if remaining <= 0:
+            robot.stop()
+            return False
+
         # Sem obstaculo o ultrassom mede 2550 mm, que conta como caminho livre.
         front = ultrasonic_sensor.distance()
         if front <= stop_distance:
             robot.stop()
             return False
 
-        speed = min(drive_speed,
-                    max(MIN_APPROACH_SPEED, (front - stop_distance) * 2))
+        speed = min(drive_speed, max(MIN_APPROACH_SPEED, remaining * 2))
         turn_rate = gyro_pid(robot, gyro_sensor, speed, pid_params)
-        odometry.record("maze", stop_distance, pid_params.reference, speed,
+        odometry.record("cell", distance, pid_params.reference, speed,
                         turn_rate)
         wait(SAMPLE_TIME_MS)
+
+
+def align_to_front_wall(robot, gyro_sensor, pid_params, odometry, heading,
+                        ultrasonic_sensor, target_distance):
+    """Centraliza o robo na celula usando a parede da frente: anda para a
+    frente ou de re, mantendo o heading absoluto com o PID do giroscopio, ate
+    o ultrassom medir 'target_distance' mm (dentro de ALIGN_TOLERANCE). A
+    velocidade e proporcional ao erro, limitada entre ALIGN_MIN_SPEED e
+    ALIGN_MAX_SPEED. Se nao chegar ao alvo em ALIGN_TIMEOUT_MS, desiste e
+    segue da posicao em que estiver."""
+    pid_params.reference = heading
+    pid_params.last_error = heading - gyro_sensor.angle()
+    pid_params.ie_dt = 0
+    stopwatch = StopWatch()
+
+    while stopwatch.time() < ALIGN_TIMEOUT_MS:
+        error = ultrasonic_sensor.distance() - target_distance
+        if abs(error) <= ALIGN_TOLERANCE:
+            break
+
+        speed = ALIGN_GAIN * error
+        if speed > ALIGN_MAX_SPEED:
+            speed = ALIGN_MAX_SPEED
+        elif speed < -ALIGN_MAX_SPEED:
+            speed = -ALIGN_MAX_SPEED
+        elif 0 < speed < ALIGN_MIN_SPEED:
+            speed = ALIGN_MIN_SPEED
+        elif -ALIGN_MIN_SPEED < speed < 0:
+            speed = -ALIGN_MIN_SPEED
+
+        turn_rate = gyro_pid(robot, gyro_sensor, speed, pid_params)
+        odometry.record("align", target_distance, pid_params.reference, speed,
+                        turn_rate)
+        wait(SAMPLE_TIME_MS)
+
+    robot.stop()
+    wait(100)
+
+
+def choose_turn(left, front, right, open_distance):
+    """Regra da mao direita: o robo prefere virar a direita, depois seguir em
+    frente, depois virar a esquerda e, se tudo estiver fechado (beco sem
+    saida), da meia volta. Um lado esta livre quando a leitura do ultrassom
+    passa de 'open_distance' mm. Retorna o giro em graus (+90 e a direita,
+    -90 a esquerda, 0 segue em frente)."""
+    if right > open_distance:
+        return 90
+    elif front > open_distance:
+        return 0
+    elif left > open_distance:
+        return -90
+    else:
+        return 180
 
 
 def scan_sides(turret_motor, ultrasonic_sensor):

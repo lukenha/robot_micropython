@@ -4,12 +4,17 @@
 Resolvedor de labirinto com odometria - LEGO EV3 / pybricks
 -----------------------------------------------------------
 
-O robo anda em linha reta, guiado pelo PID do giroscopio, ate o ultrassom
-encontrar uma parede. Ali ele para, gira a torre do ultrassom para medir a
-distancia ate as paredes da esquerda e da direita e gira 90 graus para o lado
-mais livre. Se os dois lados estiverem fechados (beco sem saida), da meia volta
-(180 graus). O percurso termina quando o sensor de cor encontra a faixa preta
-de chegada. O botao e usado apenas para iniciar.
+O robo percorre o labirinto celula a celula (cada celula tem ~250 mm). Em
+cada celula ele:
+  1. avanca ate o centro, medindo a distancia pelos encoders e mantendo a
+     direcao com o PID do giroscopio;
+  2. se houver parede a frente, se alinha por ela com o ultrassom, corrigindo
+     o erro acumulado dos encoders;
+  3. gira a torre do ultrassom para medir a esquerda e a direita;
+  4. decide pela regra da mao direita (direita, frente, esquerda ou meia
+     volta) e gira para o heading escolhido.
+O percurso termina quando o sensor de cor encontra a faixa preta de chegada.
+O botao e usado apenas para iniciar.
 
 Durante todo o percurso o OdometryLogger grava em CSV as medidas dos sensores,
 os setpoints de distancia e angulo, a variavel manipulada do PID e a pose
@@ -34,7 +39,8 @@ from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
 
-from functions import drive_until_wall, scan_sides, turn_in_place
+from functions import (align_to_front_wall, choose_turn, drive_cell,
+                       scan_sides, turn_in_place)
 from models import PID_parameters
 from odometry import OdometryLogger
 
@@ -50,11 +56,23 @@ HEADING_KP = 1.5 #2.0
 HEADING_KI = 0.7 #0.01
 HEADING_KD = 0 #7.5
 
-# Distancia da parede da frente em que o robo para e decide o giro, em mm.
+# Parada de seguranca: se o ultrassom medir uma parede a essa distancia
+# durante um avanco, o robo para antes de completar a celula, em mm.
 STOP_DISTANCE = 60
 
-# Distancia lateral ate a qual o lado e considerado fechado por parede, em mm.
-SIDE_OPEN_DISTANCE = 200
+# Leitura do ultrassom acima da qual um lado (ou a frente) e considerado livre,
+# em mm.
+OPEN_DISTANCE = 200
+
+# Geometria do labirinto, em mm. Valores ESTIMADOS, a medir no robo:
+# - CELL_SIZE: lado de uma celula do labirinto;
+# - FIRST_CELL_DISTANCE: quanto o eixo das rodas anda da largada (faixa preta)
+#   ate o centro da primeira celula;
+# - FRONT_CENTER_DISTANCE: leitura do ultrassom com o robo no centro de uma
+#   celula e parede a frente.
+CELL_SIZE = 250
+FIRST_CELL_DISTANCE = 150
+FRONT_CENTER_DISTANCE = 70
 
 
 left_motor = Motor(Port.A)
@@ -104,29 +122,41 @@ while not touch_sensor.pressed():
 
 odometry.record("start", 0, gyro_sensor.angle(), 0, 0)
 
-# Percurso no labirinto. O heading alvo e absoluto, contado desde a largada, e
-# sempre multiplo de 90 graus: cada decisao soma o giro escolhido ao alvo, e
-# tanto a curva quanto a reta seguinte usam esse alvo como referencia do PID.
-# drive_until_wall retorna True quando encontra a faixa preta de chegada (com o
-# sensor de linha desativado, nunca retorna True).
+# Percurso no labirinto, celula a celula. O heading alvo e absoluto, contado
+# desde a largada, e sempre multiplo de 90 graus: cada decisao soma o giro
+# escolhido ao alvo, e tanto a curva quanto o avanco seguinte usam esse alvo
+# como referencia do PID. drive_cell retorna True quando encontra a faixa preta
+# de chegada (com o sensor de linha desativado, nunca retorna True).
 target_heading = 0
 
-while not drive_until_wall(robot, gyro_sensor, heading_pid, odometry,
-                           target_heading, ultrasonic_sensor,
-                           # line_sensor, BLACK_REFLECTION_THRESHOLD,
-                           STOP_DISTANCE, DRIVE_SPEED):
+reached_exit = drive_cell(robot, gyro_sensor, heading_pid, odometry,
+                          target_heading, FIRST_CELL_DISTANCE,
+                          ultrasonic_sensor,
+                          # line_sensor, BLACK_REFLECTION_THRESHOLD,
+                          STOP_DISTANCE, DRIVE_SPEED)
+
+while not reached_exit:
+    # Com parede a frente, o robo se alinha por ela antes de medir os lados,
+    # para que as leituras laterais sejam feitas ja no centro da celula.
+    front_distance = ultrasonic_sensor.distance()
+    if front_distance <= OPEN_DISTANCE:
+        align_to_front_wall(robot, gyro_sensor, heading_pid, odometry,
+                            target_heading, ultrasonic_sensor,
+                            FRONT_CENTER_DISTANCE)
+
     left_distance, right_distance = scan_sides(turret_motor, ultrasonic_sensor)
-    if (left_distance <= SIDE_OPEN_DISTANCE and right_distance <= SIDE_OPEN_DISTANCE):
-        turn_angle = 180  # beco sem saida
+    turn_angle = choose_turn(left_distance, front_distance, right_distance,
+                             OPEN_DISTANCE)
 
-    elif left_distance > right_distance:
-        turn_angle = -90
-        
-    else:
-        turn_angle = 90
+    if turn_angle != 0:
+        target_heading = target_heading + turn_angle
+        turn_in_place(robot, gyro_sensor, heading_pid, odometry,
+                      target_heading)
 
-    target_heading = target_heading + turn_angle
-    turn_in_place(robot, gyro_sensor, heading_pid, odometry, target_heading)
+    reached_exit = drive_cell(robot, gyro_sensor, heading_pid, odometry,
+                              target_heading, CELL_SIZE, ultrasonic_sensor,
+                              # line_sensor, BLACK_REFLECTION_THRESHOLD,
+                              STOP_DISTANCE, DRIVE_SPEED)
 
 robot.stop()
 wait(200)  # deixa o robo parar de fato antes da ultima amostra.
