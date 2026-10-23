@@ -10,10 +10,11 @@ MIN_APPROACH_SPEED = 60
 
 # Torre do ultrassom: velocidade (graus/s) e angulos absolutos do motor para
 # olhar para cada lado. O angulo 0 e o sensor apontado para a frente. O sinal
-# depende da montagem e precisa ser confirmado no robo.
+# depende da montagem: no teste com o robo, -90 olhava para a direita, entao
+# a esquerda e +90 e a direita e -90.
 TURRET_SPEED = 500
-TURRET_LEFT = -90
-TURRET_RIGHT = 90
+TURRET_LEFT = 90
+TURRET_RIGHT = -90
 
 # Tempo para o ultrassom estabilizar depois que a torre para, em ms.
 TURRET_SETTLE_MS = 100
@@ -73,7 +74,8 @@ def turn_in_place(robot, gyro_sensor, pid_params, odometry, heading):
 
 
 def drive_until_wall(robot, gyro_sensor, pid_params, odometry, heading,
-                     ultrasonic_sensor, line_sensor, black_threshold,
+                     ultrasonic_sensor,
+                     # line_sensor, black_threshold,
                      stop_distance, drive_speed):
     """Anda em linha reta, mantendo o heading absoluto 'heading' com o PID do
     giroscopio, ate o ultrassom medir uma parede a 'stop_distance' mm ou o
@@ -84,21 +86,25 @@ def drive_until_wall(robot, gyro_sensor, pid_params, odometry, heading,
     Retorna True se parou na faixa preta e False se parou na parede.
 
     O robo larga em cima da faixa preta, entao a faixa so passa a contar depois
-    que o sensor de cor ve o chao claro pela primeira vez no trecho."""
+    que o sensor de cor ve o chao claro pela primeira vez no trecho.
+
+    SENSOR DE LINHA DESATIVADO: a deteccao da faixa preta esta comentada
+    enquanto o sensor de cor nao esta montado, entao a funcao so para na
+    parede e sempre retorna False."""
     pid_params.reference = heading
     pid_params.last_error = heading - gyro_sensor.angle()
     pid_params.ie_dt = 0
     robot.reset()
 
-    seen_floor = False
+    # seen_floor = False
 
     while True:
-        if line_sensor.reflection() <= black_threshold:
-            if seen_floor:
-                robot.stop()
-                return True
-        else:
-            seen_floor = True
+        # if line_sensor.reflection() <= black_threshold:
+        #     if seen_floor:
+        #         robot.stop()
+        #         return True
+        # else:
+        #     seen_floor = True
 
         # Sem obstaculo o ultrassom mede 2550 mm, que conta como caminho livre.
         front = ultrasonic_sensor.distance()
