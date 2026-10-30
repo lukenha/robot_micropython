@@ -2,6 +2,8 @@ from math import cos, degrees, pi, radians, sin
 
 from pybricks.tools import DataLog, StopWatch
 
+from functions import read_heading
+
 
 class OdometryLogger:
     """Registra em CSV, em tempo real, tudo o que os sensores do robo medem
@@ -23,16 +25,13 @@ class OdometryLogger:
     encoders - justamente para permitir a comparacao calculado vs medido.
     """
 
-    # SENSOR DE LINHA DESATIVADO: enquanto o sensor de cor nao esta montado, o
-    # parametro line_sensor e a coluna line_reflection_pct estao comentados.
-    def __init__(self, robot, left_motor, right_motor,
-                 # line_sensor,
+    def __init__(self, robot, left_motor, right_motor, line_sensor,
                  touch_sensor, gyro_sensor, wheel_diameter, axle_track,
                  interval_ms=100):
         self.robot = robot
         self.left_motor = left_motor
         self.right_motor = right_motor
-        # self.line_sensor = line_sensor
+        self.line_sensor = line_sensor
         self.touch_sensor = touch_sensor
         self.gyro_sensor = gyro_sensor
         self.wheel_diameter = wheel_diameter
@@ -67,7 +66,7 @@ class OdometryLogger:
             "left_motor_speed_deg_s",
             "right_motor_angle_deg",
             "right_motor_speed_deg_s",
-            # "line_reflection_pct",
+            "line_reflection_pct",
             "button_pressed",
 
             # Odometria calculada a partir das medidas.
@@ -126,7 +125,7 @@ class OdometryLogger:
 
         # Cada medida e lida uma unica vez por amostra, para que o valor
         # registrado e o valor usado nos calculos sejam o mesmo.
-        gyro_angle = self.gyro_sensor.angle()
+        gyro_angle = read_heading(self.gyro_sensor)
         left_angle = self.left_motor.angle()
         right_angle = self.right_motor.angle()
 
@@ -152,7 +151,7 @@ class OdometryLogger:
             self.left_motor.speed(),
             right_angle,
             self.right_motor.speed(),
-            # self.line_sensor.reflection(),
+            self.line_sensor.reflection(),
             self.touch_sensor.pressed(),
 
             self.robot.distance(),

@@ -26,39 +26,35 @@ sentido horario (convencao padrao do pybricks), entao +90 vira para a direita e
 como o sentido da torre (TURRET_LEFT / TURRET_RIGHT em functions.py).
 """
 
-from pybricks.ev3devices import (Motor, TouchSensor, GyroSensor,
+from pybricks.ev3devices import (Motor, ColorSensor, TouchSensor, GyroSensor,
                                  UltrasonicSensor)
-
-# SENSOR DE LINHA DESATIVADO: o sensor de cor ainda nao esta montado, entao
-# todas as mencoes a ele (line_sensor, ColorSensor, BLACK_REFLECTION_THRESHOLD)
-# estao comentadas aqui, em functions.py e em odometry.py. Sem ele, a largada
-# depende so do botao e a chegada nunca e detectada: o robo precisa ser parado
-# manualmente (botao de voltar do EV3). Para reativar, descomentar esses trechos.
-# from pybricks.ev3devices import ColorSensor
 from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
 
-from functions import (align_to_front_wall, choose_turn, drive_cell,
-                       scan_sides, turn_in_place)
+from functions import (align_to_front_wall, calibrate_gyro, choose_turn,
+                       drive_cell, read_heading, turn_in_place)
 from models import PID_parameters
 from odometry import OdometryLogger
 
 
-# Geometria do robo, em mm.
+# Geometria do robo, em mm. AXLE_TRACK e a distancia entre os centros das
+# rodas: 146 mm entre as extremidades externas menos 28 mm de largura do pneu.
 WHEEL_DIAMETER = 55.5
-AXLE_TRACK = 104
+AXLE_TRACK = 118
 
 DRIVE_SPEED = 200
-# BLACK_REFLECTION_THRESHOLD = 15
+BLACK_REFLECTION_THRESHOLD = 15
 
-HEADING_KP = 1.5 #2.0
+# KP subiu de 1.5 para 2.0 para tirar o erro de 1-2 graus que sobrava nas retas.
+# Para reverter, voltar para 1.5.
+HEADING_KP = 2.0
 HEADING_KI = 0.7 #0.01
 HEADING_KD = 0 #7.5
 
 # Parada de seguranca: se o ultrassom medir uma parede a essa distancia
 # durante um avanco, o robo para antes de completar a celula, em mm.
-STOP_DISTANCE = 60
+STOP_DISTANCE = 35
 
 # Leitura do ultrassom acima da qual um lado (ou a frente) e considerado livre,
 # em mm.
@@ -66,20 +62,27 @@ OPEN_DISTANCE = 200
 
 # Geometria do labirinto, em mm. Valores ESTIMADOS, a medir no robo:
 # - CELL_SIZE: lado de uma celula do labirinto;
-# - FIRST_CELL_DISTANCE: quanto o eixo das rodas anda da largada (faixa preta)
-#   ate o centro da primeira celula;
+# - FIRST_CELL_DISTANCE: quanto o robo anda da largada ate a posicao de parada
+#   da primeira celula. Na largada (faixa preta sob o sensor de cor) o
+#   ultrassom fica a ~115 mm da parede da primeira celula; andando
+#   115 - FRONT_CENTER_DISTANCE = 80 mm, ele para na mesma posicao relativa
+#   a celula que nas demais (ultrassom a 35 mm da parede);
 # - FRONT_CENTER_DISTANCE: leitura do ultrassom com o robo no centro de uma
-#   celula e parede a frente.
+#   celula e parede a frente. O ultrassom do EV3 so mede com confianca a
+#   partir de ~30 mm, entao 35 mm (com a tolerancia de 5 mm do alinhamento)
+#   e o mais perto possivel da parede.
 CELL_SIZE = 250
-FIRST_CELL_DISTANCE = 150
-FRONT_CENTER_DISTANCE = 70
+FIRST_CELL_DISTANCE = 80
+FRONT_CENTER_DISTANCE = 35
 
 
-left_motor = Motor(Port.A)
-right_motor = Motor(Port.D)
+# Na montagem atual, o motor da roda esquerda esta na porta D e o da direita
+# na porta A.
+left_motor = Motor(Port.D)
+right_motor = Motor(Port.A)
 turret_motor = Motor(Port.B)
 
-#line_sensor = ColorSensor(Port.S2)
+line_sensor = ColorSensor(Port.S2)
 touch_sensor = TouchSensor(Port.S1)
 gyro_sensor = GyroSensor(Port.S3)
 ultrasonic_sensor = UltrasonicSensor(Port.S4)
@@ -91,7 +94,7 @@ odometry = OdometryLogger(
     robot,
     left_motor,
     right_motor,
-    #line_sensor,
+    line_sensor,
     touch_sensor,
     gyro_sensor,
     wheel_diameter=WHEEL_DIAMETER,
@@ -106,37 +109,38 @@ heading_pid = PID_parameters(
     reference=0,
 )
 
-# Zera as medidas com o robo parado, para que a odometria comece na origem. A
+# Unico acionamento manual do programa: robo posicionado sobre a linha preta e
+# botao pressionado.
+while not (touch_sensor.pressed()
+           and line_sensor.reflection() <= BLACK_REFLECTION_THRESHOLD):
+    wait(10)
+
+# Depois do botao (que mexe o robo ao ser apertado), recalibra o giroscopio e
+# zera as medidas com o robo parado, para que a odometria comece na origem. A
 # torre do ultrassom precisa estar apontada para a frente nesse momento.
-gyro_sensor.reset_angle(0)
+calibrate_gyro(gyro_sensor)
 left_motor.reset_angle(0)
 right_motor.reset_angle(0)
 turret_motor.reset_angle(0)
 robot.reset()
 
-# Unico acionamento manual do programa: robo posicionado sobre a linha preta e
-# botao pressionado. Com o sensor de linha desativado, basta o botao.
-while not touch_sensor.pressed():
-    # and line_sensor.reflection() <= BLACK_REFLECTION_THRESHOLD
-    wait(10)
-
-odometry.record("start", 0, gyro_sensor.angle(), 0, 0)
+odometry.record("start", 0, read_heading(gyro_sensor), 0, 0)
 
 # Percurso no labirinto, celula a celula. O heading alvo e absoluto, contado
 # desde a largada, e sempre multiplo de 90 graus: cada decisao soma o giro
 # escolhido ao alvo, e tanto a curva quanto o avanco seguinte usam esse alvo
 # como referencia do PID. drive_cell retorna True quando encontra a faixa preta
-# de chegada (com o sensor de linha desativado, nunca retorna True).
+# de chegada.
 target_heading = 0
 
 reached_exit = drive_cell(robot, gyro_sensor, heading_pid, odometry,
                           target_heading, FIRST_CELL_DISTANCE,
-                          ultrasonic_sensor,
-                          # line_sensor, BLACK_REFLECTION_THRESHOLD,
-                          STOP_DISTANCE, DRIVE_SPEED)
+                          ultrasonic_sensor, line_sensor,
+                          BLACK_REFLECTION_THRESHOLD, STOP_DISTANCE,
+                          DRIVE_SPEED)
 
 while not reached_exit:
-    # Com parede a frente, o robo se alinha por ela antes de medir os lados,
+    # Com parede a frente, o robo se alinha por ela antes de olhar os lados,
     # para que as leituras laterais sejam feitas ja no centro da celula.
     front_distance = ultrasonic_sensor.distance()
     if front_distance <= OPEN_DISTANCE:
@@ -144,8 +148,7 @@ while not reached_exit:
                             target_heading, ultrasonic_sensor,
                             FRONT_CENTER_DISTANCE)
 
-    left_distance, right_distance = scan_sides(turret_motor, ultrasonic_sensor)
-    turn_angle = choose_turn(left_distance, front_distance, right_distance,
+    turn_angle = choose_turn(turret_motor, ultrasonic_sensor, front_distance,
                              OPEN_DISTANCE)
 
     if turn_angle != 0:
@@ -155,9 +158,9 @@ while not reached_exit:
 
     reached_exit = drive_cell(robot, gyro_sensor, heading_pid, odometry,
                               target_heading, CELL_SIZE, ultrasonic_sensor,
-                              # line_sensor, BLACK_REFLECTION_THRESHOLD,
+                              line_sensor, BLACK_REFLECTION_THRESHOLD,
                               STOP_DISTANCE, DRIVE_SPEED)
 
 robot.stop()
 wait(200)  # deixa o robo parar de fato antes da ultima amostra.
-odometry.record("end", 0, gyro_sensor.angle(), 0, 0)
+odometry.record("end", 0, read_heading(gyro_sensor), 0, 0)
