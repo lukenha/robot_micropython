@@ -11,32 +11,28 @@ Building instructions can be found at:
 https://education.lego.com/en-us/support/mindstorms-ev3/building-instructions#robot
 """
 
-from pybricks.ev3devices import Motor, ColorSensor, UltrasonicSensor, TouchSensor, GyroSensor
+from pybricks.ev3devices import Motor, UltrasonicSensor 
 from pybricks.parameters import Port
 from pybricks.tools import wait
 from pybricks.robotics import DriveBase
+from pybricks.media.ev3dev import SoundFile
+from pybricks.hubs import EV3Brick
 
 from functions import *
+from server import *
 
-
+brick = EV3Brick()
+soundfile = SoundFile()
 
 left_motor = Motor(Port.A)
 right_motor = Motor(Port.D)
 
-line_sensor = ColorSensor(Port.S2)
 ultrasonic_sensor = UltrasonicSensor(Port.S3)
-touch_sensor = TouchSensor(Port.S1)
-gyro_sensor = GyroSensor(Port.S4)
 
 robot = DriveBase(left_motor, right_motor, wheel_diameter=55.5, axle_track=104)
 
-
-BLACK = 50
-WHITE = 50
-threshold = (BLACK + WHITE) / 2
-
 # Threshold da distância para o sensor ultrassônico.
-DISTANCE_THRESHOLD = 200  # Distância em milímetros
+DISTANCE_THRESHOLD = 300  # Distância em milímetros
 
 # Definição da velocidade em milimetros por segundo
 DRIVE_SPEED = 100
@@ -44,24 +40,37 @@ DRIVE_SPEED = 100
 # Taxa de giro fixa para o seguidor de linha.
 TURN_RATE = 30
 
+mail_box = server_setup()
 
-# Start following the line endlessly.
-while True:
-    if touch_sensor.pressed():
+iteration = 0
 
-        while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
-            line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED)
+while iteration != 3:
 
-        gyro_turn(robot, 180)
+    # Loop principal
 
-        while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
-            line_following_fixed_angle(robot, line_sensor, threshold, TURN_RATE, DRIVE_SPEED)
+    # Anda reto pra frente ate encontrar um obstaculo
+    # Depois, gira aleatoriamente e envia uma mensagem para o cliente 1
+    while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
+        drive_straight(robot, DRIVE_SPEED)
+    else:
+        brick.speaker.play_file(soundfile.UH_OH)
+        random_turn(robot)
+        server_send(mail_box, "client_1: go")
+        brick.speaker.play_file(soundfile.GO)
 
-        gyro_turn(robot, 90)
+    # Espera client 1 terminar e inicia client 2
+    while server_receive(mail_box) != "client_1: done":
+        wait(100)
+    else:
+        brick.speaker.play_file(soundfile.GOOD_JOB)
+        server_send(mail_box, "client_2: go")
+        brick.speaker.play_file(soundfile.GO)
 
-        wait(3000)
-        robot.stop()
+    # Espera client 2 terminar e proxima iteracao
+    while server_receive(mail_box) != "client_2: done":
+        wait(100)
+    else:
+        brick.speaker.play_file(soundfile.GOOD_JOB)
+        iteration += 1
 
 
-    
-    
