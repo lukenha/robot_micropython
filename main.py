@@ -47,15 +47,18 @@ iteration = 0
 while iteration != 3:
 
     # Loop principal
-
+    brick.speaker.play_file(soundfile.ZERO)
+    brick.speaker.play_file(soundfile.FORWARD)
     # Anda reto pra frente ate encontrar um obstaculo
     # Depois, gira aleatoriamente e envia uma mensagem para o cliente 1
     while not ultrasonic_read_bool(ultrasonic_sensor, DISTANCE_THRESHOLD):
         drive_straight(robot, DRIVE_SPEED)
     else:
         brick.speaker.play_file(soundfile.UH_OH)
+        brick.speaker.play_file(soundfile.TURN)
         random_turn(robot)
         server_send(mail_box, "client_1: go")
+        brick.speaker.play_file(soundfile.ONE)
         brick.speaker.play_file(soundfile.GO)
 
     # Espera client 1 terminar e inicia client 2
@@ -64,6 +67,7 @@ while iteration != 3:
     else:
         brick.speaker.play_file(soundfile.GOOD_JOB)
         server_send(mail_box, "client_2: go")
+        brick.speaker.play_file(soundfile.TWO)
         brick.speaker.play_file(soundfile.GO)
 
     # Espera client 2 terminar e proxima iteracao
