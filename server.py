@@ -6,6 +6,7 @@
 
 # The server must be started before the client!
 
+
 from pybricks.messaging import BluetoothMailboxServer, TextMailbox
 
 def server_setup():
@@ -29,16 +30,18 @@ def server_receive_hello(mbox):
     mbox.send('hello to you!')
 
 
-def server_receive(mbox):
+def server_receive(mbox, expected_message):
     # Verifica se o cliente mandou mensagem, e retorna a propria mensagem
-    if mbox.read():
-        if mbox.read():
-            message = mbox.read()
-            print(message)
-            return message
-        else:
-            return None
+    mbox.wait()
+    message = mbox.read()
+    print(message)
+
+    while message != expected_message:
+        mbox.wait()
+        message = mbox.read()
+        print(message)
 
 
+    
 def server_send(mbox, message):
     mbox.send(message)
